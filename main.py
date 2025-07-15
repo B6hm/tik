@@ -1,58 +1,94 @@
+import telebot
 from selenium import webdriver
-from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
 import time
+import os
 
-# إعداد المتصفح بدون واجهة (headless)
-options = Options()
-options.add_argument('--headless')
-options.add_argument('--no-sandbox')
-options.add_argument('--disable-dev-shm-usage')
-driver = webdriver.Chrome(options=options)
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+bot = telebot.TeleBot(BOT_TOKEN)
 
-# ⌨️ إدخال البيانات
-email_a = input("Email حساب A: ")
-pass_a = input("كلمة مرور A: ")
-email_b = input("Email حساب B: ")
-pass_b = input("كلمة مرور B: ")
-old_username = input("الاسم الحالي (المطلوب نقله): ")
-temp_username = input("الاسم المؤقت لحساب A: ")
+user_data = {}
 
-# ===== تسجيل الدخول إلى حساب A وتغيير الاسم =====
-driver.get("https://www.tiktok.com/login/phone-or-email/email")
-time.sleep(4)
+@bot.message_handler(commands=['start'])
+def start(message):
+    bot.send_message(message.chat.id, "👋 أهلاً بك! لنبدأ نقل اسم مستخدم TikTok.\nأرسل إيميل الحساب A:")
+    user_data[message.chat.id] = {}
 
-driver.find_element(By.NAME, "email").send_keys(email_a)
-driver.find_element(By.NAME, "password").send_keys(pass_a)
-driver.find_element(By.XPATH, "//button[@type='submit']").click()
-time.sleep(6)
+@bot.message_handler(func=lambda m: True)
+def collect_info(message):
+    uid = message.chat.id
+    state = user_data.get(uid, {})
 
-driver.get("https://www.tiktok.com/settings/profile")
-time.sleep(5)
+    if "email_a" not in state:
+        state["email_a"] = message.text
+        bot.send_message(uid, "🔐 أرسل كلمة مرور حساب A:")
+    elif "pass_a" not in state:
+        state["pass_a"] = message.text
+        bot.send_message(uid, "📩 أرسل إيميل الحساب B:")
+    elif "email_b" not in state:
+        state["email_b"] = message.text
+        bot.send_message(uid, "🔐 أرسل كلمة مرور حساب B:")
+    elif "pass_b" not in state:
+        state["pass_b"] = message.text
+        bot.send_message(uid, "📛 أرسل اسم المستخدم الذي تريد نقله:")
+    elif "target_username" not in state:
+        state["target_username"] = message.text
+        bot.send_message(uid, "🔄 أرسل الاسم المؤقت لحساب A:")
+    elif "temp_username" not in state:
+        state["temp_username"] = message.text
+        bot.send_message(uid, "🚀 جاري تنفيذ النقل، انتظر لحظات...")
 
-username_input = driver.find_element(By.NAME, "uniqueId")
-username_input.clear()
-username_input.send_keys(temp_username)
-driver.find_element(By.XPATH, "//button[contains(text(),'Save')]").click()
-print("[✓] غيّر الاسم في حساب A إلى المؤقت")
+        try:
+            do_username_transfer(state)
+            bot.send_message(uid, "✅ تم نقل الاسم بنجاح!")
+        except Exception as e:
+            bot.send_message(uid, f"❌ حدث خطأ أثناء النقل: {e}")
+        finally:
+            user_data.pop(uid, None)
 
-# ===== تسجيل الدخول إلى حساب B وتغيير الاسم إلى القديم =====
-driver.delete_all_cookies()
-driver.get("https://www.tiktok.com/login/phone-or-email/email")
-time.sleep(4)
+def do_username_transfer(data):
+    options = Options()
+    options.add_argument('--headless')
+    options.add_argument('--no-sandbox')
+    options.add_argument('--disable-dev-shm-usage')
+    driver = webdriver.Chrome(options=options)
 
-driver.find_element(By.NAME, "email").send_keys(email_b)
-driver.find_element(By.NAME, "password").send_keys(pass_b)
-driver.find_element(By.XPATH, "//button[@type='submit']").click()
-time.sleep(6)
+    # تسجيل دخول حساب A
+    driver.get("https://www.tiktok.com/login/phone-or-email/email")
+    time.sleep(5)
+    driver.find_element(By.NAME, "email").send_keys(data["email_a"])
+    driver.find_element(By.NAME, "password").send_keys(data["pass_a"])
+    driver.find_element(By.XPATH, "//button[@type='submit']").click()
+    time.sleep(6)
 
-driver.get("https://www.tiktok.com/settings/profile")
-time.sleep(5)
+    # تغيير الاسم في A إلى مؤقت
+    driver.get("https://www.tiktok.com/settings/profile")
+    time.sleep(5)
+    username_input = driver.find_element(By.NAME, "uniqueId")
+    username_input.clear()
+    username_input.send_keys(data["temp_username"])
+    driver.find_element(By.XPATH, "//button[contains(text(),'Save')]").click()
+    time.sleep(4)
 
-username_input = driver.find_element(By.NAME, "uniqueId")
-username_input.clear()
-username_input.send_keys(old_username)
-driver.find_element(By.XPATH, "//button[contains(text(),'Save')]").click()
-print("[✓] تم نقل الاسم إلى حساب B بنجاح ✅")
+    # تسجيل دخول حساب B
+    driver.delete_all_cookies()
+    driver.get("https://www.tiktok.com/login/phone-or-email/email")
+    time.sleep(5)
+    driver.find_element(By.NAME, "email").send_keys(data["email_b"])
+    driver.find_element(By.NAME, "password").send_keys(data["pass_b"])
+    driver.find_element(By.XPATH, "//button[@type='submit']").click()
+    time.sleep(6)
 
-driver.quit()
+    # تغيير الاسم في B إلى الاسم المستهدف
+    driver.get("https://www.tiktok.com/settings/profile")
+    time.sleep(5)
+    username_input = driver.find_element(By.NAME, "uniqueId")
+    username_input.clear()
+    username_input.send_keys(data["target_username"])
+    driver.find_element(By.XPATH, "//button[contains(text(),'Save')]").click()
+    time.sleep(3)
+
+    driver.quit()
+
+bot.polling()
